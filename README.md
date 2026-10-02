@@ -119,9 +119,9 @@ Assets/
     caustics_1.png
 ```
 
-## Source control note
+## Development archive
 
-The project was originally developed inside a larger Unity workspace that was tracked with Plastic SCM / Unity Version Control. This repository begins with a single Git import snapshot instead of fabricating historical Git commits. The original changeset summary and the mapping to this export are documented in [docs/SCM_HISTORY.md](docs/SCM_HISTORY.md)
+The project was developed with Unity Version Control / Plastic SCM and migrated to GitHub as a complete implementation. The technical milestones and subsequent Git updates are documented in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## References
 
@@ -238,9 +238,9 @@ flowchart LR
 
 更详细的实现说明见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
-## 版本记录说明
+## 开发归档
 
-这个功能最初在一个同时包含 Boids 的大型 Unity 工程中开发，并使用 Plastic SCM / Unity Version Control 管理。为了避免伪造 Git 开发历史，本仓库从一次真实的导出快照开始。原 SCM 变更摘要与本仓库的对应关系记录在 [docs/SCM_HISTORY.md](docs/SCM_HISTORY.md)
+项目开发阶段使用 Unity Version Control / Plastic SCM 管理，完成实现后迁移到 GitHub。技术演进和迁移后的 Git 更新记录见 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
 ## 许可证
 
