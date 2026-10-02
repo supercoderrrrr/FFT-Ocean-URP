@@ -18,6 +18,8 @@ The following capture runs the real Unity scene and switches between three restr
 
 Underwater rendering uses the same animated FFT surface, with depth-aware absorption, scattering, the waterline, and two-layer projected caustics
 
+The underwater preview uses a light-shaft strength of `0.12` and a gentle distant-water fade to preserve the contrast of the caustic pattern
+
 ![Underwater rendering and projected caustics](docs/media/ocean-underwater.png)
 
 ## Highlights
@@ -153,6 +155,8 @@ No open-source license is granted by this repository. The code and original proj
 | ![基准海况](docs/media/ocean-baseline.png) | ![更锐利的浪尖](docs/media/ocean-sharp-crests.png) | ![更强的风浪](docs/media/ocean-stronger-wind.png) |
 
 水下画面继续使用同一套 FFT 动态水面，并叠加基于深度的吸收、散射、水线与双层投影焦散
+
+水下预览将光束强度设为 `0.12`，配合远景水色渐隐，让焦散花纹保持清晰的对比度
 
 ![水下渲染与投影焦散](docs/media/ocean-underwater.png)
 

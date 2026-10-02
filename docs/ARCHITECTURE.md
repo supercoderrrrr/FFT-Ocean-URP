@@ -56,6 +56,10 @@ The pass reconstructs world position from the camera depth texture, computes the
 - Directional light shafts
 - Depth-faded projected caustics on underwater geometry
 
+The last 30 percent of `Maximum Visibility` smoothly removes the remaining transmitted scene colour and completes the transition into the scattering colour. Distant seabed geometry and empty water therefore converge to the same colour instead of revealing a hard geometry boundary
+
+The showcase scene uses `Light Shaft Strength = 0.12` to retain subtle directional illumination while keeping the projected caustics readable
+
 The two caustics layers move with equal and opposite offsets. Their average projection anchor remains fixed, so the pattern changes internally without the entire projection oscillating across the seabed
 
 ## Main runtime files
@@ -69,4 +73,3 @@ The two caustics layers move with equal and opposite offsets. Their average proj
 | `FFTOceanUnderwaterFeature.cs` | URP renderer feature and fullscreen pass |
 | `FFTOceanUnderwaterController.cs` | Waterline state and underwater material parameters |
 | `FFTOceanUnderwaterURP.shader` | Underwater optical and caustics composition |
-

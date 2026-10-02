@@ -3,14 +3,30 @@ using System;
 using System.IO;
 using UnityEditor;
 using UnityEditor.Build.Reporting;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 
 public static class FFTOceanMediaBuild
 {
+    public static void TuneUnderwaterAndBuildCapturePlayer()
+    {
+        var scene = EditorSceneManager.OpenScene("Assets/Scenes/FFT-Ocean.unity");
+        FFTOceanUnderwaterController underwater = UnityEngine.Object.FindObjectOfType<FFTOceanUnderwaterController>();
+        if (underwater == null)
+            throw new InvalidOperationException("The portfolio scene is missing its underwater controller");
+
+        SerializedObject settings = new SerializedObject(underwater);
+        settings.FindProperty("lightShaftStrength").floatValue = 0.12f;
+        settings.ApplyModifiedPropertiesWithoutUndo();
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+        BuildCapturePlayer();
+    }
+
     public static void BuildCapturePlayer()
     {
         string projectRoot = Directory.GetParent(Application.dataPath).FullName;
-        string outputDirectory = Path.Combine(projectRoot, "Temp", "PortfolioCapturePlayer");
+        string outputDirectory = Path.Combine(projectRoot, "Builds", "PortfolioCapturePlayer");
         Directory.CreateDirectory(outputDirectory);
         string executablePath = Path.Combine(outputDirectory, "FFTOceanCapture.exe");
 

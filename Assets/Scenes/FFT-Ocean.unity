@@ -414,7 +414,7 @@ MonoBehaviour:
   causticsSpeed: 1.81
   causticsRelativeMotion: 0.025
   suspendedParticles: 0
-  lightShaftStrength: 0.68
+  lightShaftStrength: 0.12
 --- !u!114 &828245447
 MonoBehaviour:
   m_ObjectHideFlags: 0

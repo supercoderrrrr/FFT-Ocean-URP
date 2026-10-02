@@ -26,6 +26,7 @@ public sealed class FFTOceanPortfolioCapture : MonoBehaviour
     private Texture2D readbackTexture;
     private string outputDirectory;
     private int outputFrameIndex;
+    private bool underwaterOnly;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void CreateWhenRequested()
@@ -38,6 +39,7 @@ public sealed class FFTOceanPortfolioCapture : MonoBehaviour
         GameObject captureObject = new GameObject("FFT Ocean Portfolio Capture");
         FFTOceanPortfolioCapture capture = captureObject.AddComponent<FFTOceanPortfolioCapture>();
         capture.outputDirectory = Path.GetFullPath(arguments[argumentIndex + 1]);
+        capture.underwaterOnly = Array.IndexOf(arguments, "-fftOceanUnderwaterOnly") >= 0;
         DontDestroyOnLoad(captureObject);
     }
 
@@ -73,7 +75,7 @@ public sealed class FFTOceanPortfolioCapture : MonoBehaviour
         while (!ocean.IsSimulationReady)
             yield return null;
 
-        for (int presetIndex = 0; presetIndex < Presets.Length; presetIndex++)
+        for (int presetIndex = 0; !underwaterOnly && presetIndex < Presets.Length; presetIndex++)
         {
             CapturePreset preset = Presets[presetIndex];
             ocean.ApplySimulationParameters(preset.windSpeed, preset.choppiness, preset.simulationSpeed);
@@ -97,11 +99,23 @@ public sealed class FFTOceanPortfolioCapture : MonoBehaviour
             }
         }
 
+        if (underwaterOnly)
+        {
+            CapturePreset preset = Presets[Presets.Length - 1];
+            ocean.ApplySimulationParameters(preset.windSpeed, preset.choppiness, preset.simulationSpeed);
+            for (int warmupFrame = 0; warmupFrame < SimulationFrameRate * 9; warmupFrame++)
+                yield return null;
+        }
+
         captureCamera.transform.SetPositionAndRotation(
             new Vector3(0f, -8f, -12f),
             Quaternion.Euler(18f, 0f, 0f));
         for (int warmupFrame = 0; warmupFrame < SimulationFrameRate; warmupFrame++)
             yield return null;
+        CaptureFrame(Path.Combine(outputDirectory, "underwater-horizon-check.png"));
+
+        captureCamera.transform.rotation = Quaternion.Euler(23f, 30f, 0f);
+        yield return null;
         CaptureFrame(Path.Combine(outputDirectory, "still-underwater.png"));
 
         File.WriteAllText(

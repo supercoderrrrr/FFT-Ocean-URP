@@ -93,7 +93,7 @@ Shader "FFT Ocean/URP/Underwater Fullscreen"
 #endif
                 float3 worldPosition = ComputeWorldSpacePosition(uv, rawDepth, UNITY_MATRIX_I_VP);
                 float3 rayDirection = normalize(worldPosition - _WorldSpaceCameraPos);
-                float sceneDistance = min(distance(worldPosition, _WorldSpaceCameraPos), _MaximumVisibility);
+                float sceneDistance = distance(worldPosition, _WorldSpaceCameraPos);
                 if (isSky)
                     sceneDistance = _MaximumVisibility;
 
@@ -120,8 +120,11 @@ Shader "FFT Ocean/URP/Underwater Fullscreen"
                 distortion *= _DistortionStrength * waterMask;
                 half3 sourceColor = SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, uv + distortion).rgb;
 
-                float3 transmission = exp(-_Absorption * waterPath);
-                float scatterAmount = 1.0 - exp(-_ScatteringDensity * waterPath);
+                // Fade distant receivers and empty water into the same scattering colour
+                float visibility = 1.0 - smoothstep(
+                    _MaximumVisibility * 0.7, _MaximumVisibility, waterPath);
+                float3 transmission = exp(-_Absorption * waterPath) * visibility;
+                float scatterAmount = 1.0 - exp(-_ScatteringDensity * waterPath) * visibility;
                 half3 underwaterColor = sourceColor * transmission
                     + _ScatteringColor.rgb * scatterAmount;
 
