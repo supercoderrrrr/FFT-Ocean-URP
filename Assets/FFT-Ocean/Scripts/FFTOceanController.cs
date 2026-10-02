@@ -110,6 +110,17 @@ public sealed class FFTOceanController : MonoBehaviour
     public float SampledSurfaceHeight => hasSurfaceHeightSample ? sampledSurfaceHeight : transform.position.y;
     public bool IsSimulationReady => initialized;
 
+    public void ApplySimulationParameters(float newWindSpeed, float newChoppiness, float newSimulationSpeed)
+    {
+        float clampedWindSpeed = Mathf.Clamp(newWindSpeed, 0.1f, 30f);
+        if (!Mathf.Approximately(windSpeed, clampedWindSpeed))
+            spectrumDirty = true;
+
+        windSpeed = clampedWindSpeed;
+        choppiness = Mathf.Clamp(newChoppiness, 0f, 2f);
+        simulationSpeed = Mathf.Max(0.01f, newSimulationSpeed);
+    }
+
     private static readonly int[] DisplacementIds =
     {
         Shader.PropertyToID("_Displacement0"),

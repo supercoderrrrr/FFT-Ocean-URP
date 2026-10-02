@@ -4,6 +4,22 @@ A portfolio-oriented GPU ocean simulation built for Unity 2022.3 LTS and Univers
 
 This repository is an independently implemented learning project based on the ocean-spectrum concepts described by Jerry Tessendorf and modern real-time water rendering practice. It is not a source copy of the reference repositories listed below
 
+## Demo
+
+The following capture runs the real Unity scene and switches between three restrained parameter presets. The labels show the values applied at runtime
+
+![FFT Ocean parameter demonstration](docs/media/fft-ocean-parameter-demo.gif)
+
+[Download the 1280 x 720 MP4 version](docs/media/fft-ocean-parameter-demo.mp4)
+
+| Baseline | Sharper crests | Stronger wind |
+|---|---|---|
+| ![Baseline ocean](docs/media/ocean-baseline.png) | ![Sharper ocean crests](docs/media/ocean-sharp-crests.png) | ![Stronger wind ocean](docs/media/ocean-stronger-wind.png) |
+
+Underwater rendering uses the same animated FFT surface, with depth-aware absorption, scattering, the waterline, and two-layer projected caustics
+
+![Underwater rendering and projected caustics](docs/media/ocean-underwater.png)
+
 ## Highlights
 
 - GPU spectral ocean simulation using JONSWAP with TMA finite-depth correction
@@ -88,10 +104,10 @@ Detailed implementation notes are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md
 Assets/
   FFT-Ocean/
     Compute/       Spectrum, IFFT, displacement, Jacobian history
-    Scripts/       Simulation, clipmap, camera, underwater renderer feature
+    Scripts/       Simulation, clipmap, camera, underwater renderer feature, capture runner
     Shaders/       URP ocean surface and underwater fullscreen shaders
     Materials/     Portfolio-ready material presets
-    Editor/        Reproducible scene builder
+    Editor/        Reproducible scene and media-capture builders
   Scenes/
     FFT-Ocean.unity
   Settings/
@@ -123,6 +139,22 @@ No open-source license is granted by this repository. The code and original proj
 这是一个面向作品集展示的 GPU 海洋模拟项目，使用 Unity 2022.3 LTS 与 Universal Render Pipeline 14 制作
 
 项目依据 Jerry Tessendorf 的海洋频谱理论和现代实时水体渲染方法独立实现，并没有直接复制下方参考仓库的源码
+
+## 效果演示
+
+下面的动图由真实 Unity 场景自动采集，并依次切换三组较克制的海况参数，左上角标注了运行时实际使用的数值
+
+![FFT 海洋参数演示](docs/media/fft-ocean-parameter-demo.gif)
+
+[下载 1280 x 720 MP4 版本](docs/media/fft-ocean-parameter-demo.mp4)
+
+| 基准海况 | 更锐利的浪尖 | 更强的风浪 |
+|---|---|---|
+| ![基准海况](docs/media/ocean-baseline.png) | ![更锐利的浪尖](docs/media/ocean-sharp-crests.png) | ![更强的风浪](docs/media/ocean-stronger-wind.png) |
+
+水下画面继续使用同一套 FFT 动态水面，并叠加基于深度的吸收、散射、水线与双层投影焦散
+
+![水下渲染与投影焦散](docs/media/ocean-underwater.png)
 
 ## 主要功能
 
@@ -209,4 +241,3 @@ flowchart LR
 ## 许可证
 
 仓库目前没有授予开源许可证。代码和原创项目资源仅用于作品集审阅，后续可以再根据需要添加许可证
-
