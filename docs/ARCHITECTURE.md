@@ -3,14 +3,14 @@
 ## Simulation stages
 
 1. `InitializeSpectrum` creates deterministic Gaussian amplitudes and evaluates the JONSWAP spectrum
-2. TMA correction reduces physically unsupported long-wave energy at finite depth
+2. TMA correction adjusts the spectrum for finite water depth
 3. Directional cosine-2s spreading distributes energy around the authored wind direction
 4. `UpdateSpectrum` evolves each complex component with the linear dispersion relation
 5. Bit reversal and staged butterflies execute a two-dimensional inverse FFT
 6. `AssembleOcean` converts the spatial-domain fields into displacement, derivatives, and compression history
 7. The URP surface shader samples all three cascades and fades them by view distance
 
-Each cascade produces four packed complex fields during the FFT. The final textures contain vertical and horizontal displacement plus surface derivatives used to rebuild the normal. Combining derivatives before normal reconstruction prevents the regular cross-hatch pattern caused by blending independently normalized maps
+Each cascade produces four packed complex fields during the FFT. The output textures store displacement, derivatives, and compression history. The surface shader combines derivatives from all cascades before reconstructing its normal.
 
 ## Spectral cascades
 
@@ -20,15 +20,15 @@ Each cascade produces four packed complex fields during the FFT. The final textu
 | Mid | 17 m | 0.833333 m to 2.833333 m | Mid-frequency shape |
 | Short | 5 m | 0.039 m to 0.833333 m | Capillary-scale detail |
 
-Only the shared band boundaries touch. Energy is not duplicated between cascades
+The bands share boundaries and do not overlap.
 
 ## Foam
 
-The horizontal displacement derivatives define the local deformation Jacobian. Compression below the configured threshold represents folding or breaking regions. The simulation stores the minimum recent Jacobian and lets it recover over time, producing foam that follows wave crests instead of flashing independently each frame
+Horizontal displacement derivatives define the local deformation Jacobian. The simulation stores compressed regions and lets them recover over time. The surface shader maps this history to foam coverage.
 
 ## Clipmap geometry
 
-`FFTOceanMesh` creates eight nested mesh levels around the presentation camera. Near levels use small vertex spacing while distant rings grow geometrically. The ocean root snaps to a world-space grid, so the visible area can follow the camera without swimming continuously beneath it
+`FFTOceanMesh` creates eight nested levels. Vertex spacing doubles between levels. The ocean root follows the camera with grid snapping, and vertices at each ring boundary morph to the next level's spacing.
 
 ## URP surface shading
 
@@ -41,11 +41,11 @@ The ocean shader combines:
 - Jacobian history foam and optional contact foam
 - Separate front-face and underside response
 
-The shader uses URP lighting and reflection-probe functions, so the water responds to the active main light and environment rather than a hard-coded fake sun
+Direct lighting uses URP's main light. Environment reflection is sampled through `GlossyEnvironmentReflection`.
 
 ## Underwater rendering
 
-`FFTOceanUnderwaterFeature` injects a fullscreen pass after opaque rendering. `FFTOceanUnderwaterController` supplies the sampled surface height, optical coefficients, light direction, and caustics controls
+`FFTOceanUnderwaterFeature` runs a fullscreen pass before post-processing. `FFTOceanUnderwaterController` supplies surface height, optical coefficients, light direction, and caustics controls.
 
 The pass reconstructs world position from the camera depth texture, computes the path length inside water, and applies:
 
@@ -56,11 +56,9 @@ The pass reconstructs world position from the camera depth texture, computes the
 - Directional light shafts
 - Depth-faded projected caustics on underwater geometry
 
-The last 30 percent of `Maximum Visibility` smoothly removes the remaining transmitted scene colour and completes the transition into the scattering colour. Distant seabed geometry and empty water therefore converge to the same colour instead of revealing a hard geometry boundary
+Scene colour fades into the scattering colour over the last 30 percent of `Maximum Visibility`.
 
-The showcase scene uses `Light Shaft Strength = 0.12` to retain subtle directional illumination while keeping the projected caustics readable
-
-The two caustics layers move with equal and opposite offsets. Their average projection anchor remains fixed, so the pattern changes internally without the entire projection oscillating across the seabed
+Caustics use world-space projection along the light direction. Two texture samples scroll in opposite directions and are combined with `min`. Contrast, water depth, and transmission control the final intensity.
 
 ## Main runtime files
 
