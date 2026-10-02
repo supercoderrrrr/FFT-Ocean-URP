@@ -1,0 +1,419 @@
+﻿#pragma kernel InitializeSpectrum
+#pragma kernel UpdateSpectrum
+#pragma kernel BitReverseHorizontal
+#pragma kernel FFTStageHorizontal
+#pragma kernel BitReverseVertical
+#pragma kernel FFTStageVertical
+#pragma kernel AssembleOcean
+#pragma kernel SampleSurfaceHeight
+
+#define PI 3.14159265358979323846
+
+int _Resolution;
+int _LogResolution;
+int _StageSize;
+uint _Seed;
+
+float _Gravity;
+float _Depth;
+float _DomainSize;
+float _WindSpeed;
+float2 _WindDirection;
+float _Fetch;
+float _SpectrumScale;
+float _PeakEnhancement;
+float _SpreadBlend;
+float _Swell;
+float _ShortWaveDamping;
+float _MinWavelength;
+float _MaxWavelength;
+float _Time;
+float _DeltaTime;
+float _Choppiness;
+float _FoamThreshold;
+float _FoamGain;
+float _FoamDecay;
+float _TurbulenceRecovery;
+
+RWTexture2D<float4> _InitialSpectrum;
+Texture2D<float4> _InitialSpectrumRead;
+
+RWTexture2D<float4> _Spectrum0;
+RWTexture2D<float4> _Spectrum1;
+RWTexture2D<float4> _Spectrum2;
+RWTexture2D<float4> _Spectrum3;
+
+Texture2D<float4> _Input0;
+Texture2D<float4> _Input1;
+Texture2D<float4> _Input2;
+Texture2D<float4> _Input3;
+RWTexture2D<float4> _Output0;
+RWTexture2D<float4> _Output1;
+RWTexture2D<float4> _Output2;
+RWTexture2D<float4> _Output3;
+
+RWTexture2D<float4> _Displacement;
+RWTexture2D<float4> _SurfaceData;
+
+Texture2D<float4> _ProbeDisplacement0;
+Texture2D<float4> _ProbeDisplacement1;
+Texture2D<float4> _ProbeDisplacement2;
+RWStructuredBuffer<float> _HeightProbeResult;
+float2 _HeightProbeWorldXZ;
+float3 _HeightProbeDomains;
+
+uint Hash(uint value)
+{
+    value ^= value >> 16;
+    value *= 0x7feb352du;
+    value ^= value >> 15;
+    value *= 0x846ca68bu;
+    value ^= value >> 16;
+    return value;
+}
+
+float Random01(uint state)
+{
+    return (Hash(state) + 0.5) / 4294967296.0;
+}
+
+float2 GaussianPair(uint state)
+{
+    float u1 = max(Random01(state), 1e-7);
+    float u2 = Random01(state ^ 0x9e3779b9u);
+    float radius = sqrt(-2.0 * log(u1));
+    float angle = 2.0 * PI * u2;
+    float sineValue;
+    float cosineValue;
+    sincos(angle, sineValue, cosineValue);
+    return radius * float2(cosineValue, sineValue);
+}
+
+float2 ComplexMultiply(float2 a, float2 b)
+{
+    return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
+}
+
+float4 ComplexMultiplyPacked(float4 value, float2 twiddle)
+{
+    return float4(
+        ComplexMultiply(value.xy, twiddle),
+        ComplexMultiply(value.zw, twiddle)
+    );
+}
+
+float Dispersion(float waveNumber)
+{
+    return sqrt(_Gravity * waveNumber * tanh(min(waveNumber * _Depth, 20.0)));
+}
+
+float DispersionDerivative(float waveNumber, float omega)
+{
+    float kd = min(waveNumber * _Depth, 20.0);
+    float tanhKd = tanh(kd);
+    float coshKd = cosh(kd);
+    float sechSquared = 1.0 / max(coshKd * coshKd, 1.0);
+    return _Gravity * (tanhKd + waveNumber * _Depth * sechSquared) / max(2.0 * omega, 1e-5);
+}
+
+float PeakFrequency()
+{
+    return 22.0 * pow(max(_WindSpeed * _Fetch / (_Gravity * _Gravity), 1e-4), -0.33);
+}
+
+// TMA limits finite-depth long waves and converges to JONSWAP in deep water
+float TmaCorrection(float omega)
+{
+    float normalizedDepth = omega * sqrt(_Depth / _Gravity);
+    if (normalizedDepth <= 1.0)
+        return 0.5 * normalizedDepth * normalizedDepth;
+    if (normalizedDepth < 2.0)
+    {
+        float transition = 2.0 - normalizedDepth;
+        return 1.0 - 0.5 * transition * transition;
+    }
+    return 1.0;
+}
+
+float JonswapFrequencySpectrum(float omega)
+{
+    float windSquared = max(_WindSpeed * _WindSpeed, 0.01);
+    float alpha = 0.076 * pow(max(_Gravity * _Fetch / windSquared, 1e-4), -0.22);
+    float peakOmega = PeakFrequency();
+    float sigma = omega <= peakOmega ? 0.07 : 0.09;
+    float normalizedDistance = (omega - peakOmega) / max(sigma * peakOmega, 1e-5);
+    float peakShape = exp(-0.5 * normalizedDistance * normalizedDistance);
+    float baseSpectrum = alpha * _Gravity * _Gravity / max(pow(omega, 5.0), 1e-5);
+    baseSpectrum *= exp(-1.25 * pow(peakOmega / max(omega, 1e-5), 4.0));
+    return _SpectrumScale * TmaCorrection(omega) * baseSpectrum
+        * pow(max(_PeakEnhancement, 1.0), peakShape);
+}
+
+float DirectionNormalisation(float spread)
+{
+    float spread2 = spread * spread;
+    float spread3 = spread2 * spread;
+    float spread4 = spread3 * spread;
+    return spread < 5.0
+        ? -0.000564 * spread4 + 0.00776 * spread3 - 0.044 * spread2 + 0.192 * spread + 0.163
+        : -4.80e-08 * spread4 + 1.07e-05 * spread3 - 9.53e-04 * spread2 + 5.90e-02 * spread + 3.93e-01;
+}
+
+float FrequencySpread(float frequencyRatio)
+{
+    return frequencyRatio > 1.0
+        ? 9.77 * pow(abs(frequencyRatio), -2.5)
+        : 6.97 * pow(abs(frequencyRatio), 5.0);
+}
+
+// Frequency-dependent cosine-2s directional spreading
+float DirectionalSpectrum(float2 waveDirection, float omega)
+{
+    float waveAngle = atan2(waveDirection.y, waveDirection.x);
+    float windAngle = atan2(_WindDirection.y, _WindDirection.x);
+    float theta = waveAngle - windAngle;
+    float ratio = max(omega / max(PeakFrequency(), 1e-4), 0.001);
+    float spread = FrequencySpread(ratio)
+        + 16.0 * tanh(min(ratio, 20.0)) * _Swell * _Swell;
+    float cosine2s = DirectionNormalisation(spread)
+        * pow(abs(cos(0.5 * theta)), 2.0 * spread);
+    float broad = (2.0 / PI) * cos(theta) * cos(theta);
+    return lerp(broad, cosine2s, saturate(_SpreadBlend));
+}
+
+float2 WaveVector(uint2 coordinate)
+{
+    int2 signedCoordinate = int2(coordinate);
+    int halfResolution = _Resolution / 2;
+    signedCoordinate.x = signedCoordinate.x <= halfResolution ? signedCoordinate.x : signedCoordinate.x - _Resolution;
+    signedCoordinate.y = signedCoordinate.y <= halfResolution ? signedCoordinate.y : signedCoordinate.y - _Resolution;
+    return signedCoordinate * (2.0 * PI / _DomainSize);
+}
+
+uint ReverseBits(uint value)
+{
+    return reversebits(value) >> (32 - _LogResolution);
+}
+
+[numthreads(8, 8, 1)]
+void InitializeSpectrum(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_Resolution || id.y >= (uint)_Resolution)
+        return;
+
+    float2 k = WaveVector(id.xy);
+    float kLength = length(k);
+    if (kLength < 1e-5)
+    {
+        _InitialSpectrum[id.xy] = 0.0;
+        return;
+    }
+
+    float omega = Dispersion(kLength);
+    float wavelength = 2.0 * PI / kLength;
+    // Adjacent cascades share boundaries without duplicating energy
+    float wavelengthBand = wavelength >= _MinWavelength && wavelength < _MaxWavelength ? 1.0 : 0.0;
+    float frequencySpectrum = JonswapFrequencySpectrum(omega);
+    float directionSpectrum = DirectionalSpectrum(k / kLength, omega);
+    float shortWaveFade = exp(-_ShortWaveDamping * _ShortWaveDamping * kLength * kLength);
+    float conversion = abs(DispersionDerivative(kLength, omega)) / kLength;
+    float deltaK = 2.0 * PI / _DomainSize;
+    float waveNumberSpectrum = frequencySpectrum * directionSpectrum * conversion * deltaK * deltaK
+        * wavelengthBand * shortWaveFade;
+
+    uint pixelIndex = id.x + id.y * (uint)_Resolution;
+    float2 gaussian = GaussianPair(pixelIndex ^ Hash(_Seed));
+    float amplitude = sqrt(max(waveNumberSpectrum, 0.0) * 2.0);
+    _InitialSpectrum[id.xy] = float4(gaussian * amplitude, waveNumberSpectrum, 1.0);
+}
+
+[numthreads(8, 8, 1)]
+void UpdateSpectrum(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_Resolution || id.y >= (uint)_Resolution)
+        return;
+
+    float2 k = WaveVector(id.xy);
+    float kLength = length(k);
+    if (kLength < 1e-5)
+    {
+        _Spectrum0[id.xy] = 0.0;
+        _Spectrum1[id.xy] = 0.0;
+        _Spectrum2[id.xy] = 0.0;
+        _Spectrum3[id.xy] = 0.0;
+        return;
+    }
+
+    uint2 mirrored = uint2(
+        ((uint)_Resolution - id.x) % (uint)_Resolution,
+        ((uint)_Resolution - id.y) % (uint)_Resolution
+    );
+
+    float2 h0 = _InitialSpectrumRead[id.xy].xy;
+    float2 h0MinusConjugate = _InitialSpectrumRead[mirrored].xy * float2(1.0, -1.0);
+    float phase = Dispersion(kLength) * _Time;
+    float sineValue;
+    float cosineValue;
+    sincos(phase, sineValue, cosineValue);
+    float2 positivePhase = float2(cosineValue, sineValue);
+    float2 negativePhase = float2(cosineValue, -sineValue);
+    float2 height = ComplexMultiply(h0, positivePhase) + ComplexMultiply(h0MinusConjugate, negativePhase);
+    float2 iHeight = float2(-height.y, height.x);
+    float inverseK = rcp(kLength);
+
+    float2 displacementX = iHeight * (k.x * inverseK);
+    float2 displacementZ = iHeight * (k.y * inverseK);
+    float2 slopeX = iHeight * k.x;
+    float2 slopeZ = iHeight * k.y;
+    float2 derivativeXX = -height * (k.x * k.x * inverseK);
+    float2 derivativeZZ = -height * (k.y * k.y * inverseK);
+    float2 derivativeXZ = -height * (k.x * k.y * inverseK);
+
+    _Spectrum0[id.xy] = float4(displacementX, height);
+    _Spectrum1[id.xy] = float4(displacementZ, slopeX);
+    _Spectrum2[id.xy] = float4(slopeZ, derivativeXX);
+    _Spectrum3[id.xy] = float4(derivativeZZ, derivativeXZ);
+}
+
+void WriteOutputs(uint2 coordinate, float4 a, float4 b, float4 c, float4 d)
+{
+    _Output0[coordinate] = a;
+    _Output1[coordinate] = b;
+    _Output2[coordinate] = c;
+    _Output3[coordinate] = d;
+}
+
+[numthreads(8, 8, 1)]
+void BitReverseHorizontal(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_Resolution || id.y >= (uint)_Resolution)
+        return;
+    uint2 source = uint2(ReverseBits(id.x), id.y);
+    WriteOutputs(id.xy, _Input0[source], _Input1[source], _Input2[source], _Input3[source]);
+}
+
+[numthreads(8, 8, 1)]
+void BitReverseVertical(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_Resolution || id.y >= (uint)_Resolution)
+        return;
+    uint2 source = uint2(id.x, ReverseBits(id.y));
+    WriteOutputs(id.xy, _Input0[source], _Input1[source], _Input2[source], _Input3[source]);
+}
+
+void Butterfly(uint2 firstCoordinate, uint2 secondCoordinate, uint localIndex, bool subtract, out float4 a, out float4 b, out float4 c, out float4 d)
+{
+    float angle = 2.0 * PI * localIndex / _StageSize;
+    float sineValue;
+    float cosineValue;
+    sincos(angle, sineValue, cosineValue);
+    float2 twiddle = float2(cosineValue, sineValue);
+    float signValue = subtract ? -1.0 : 1.0;
+    a = _Input0[firstCoordinate] + signValue * ComplexMultiplyPacked(_Input0[secondCoordinate], twiddle);
+    b = _Input1[firstCoordinate] + signValue * ComplexMultiplyPacked(_Input1[secondCoordinate], twiddle);
+    c = _Input2[firstCoordinate] + signValue * ComplexMultiplyPacked(_Input2[secondCoordinate], twiddle);
+    d = _Input3[firstCoordinate] + signValue * ComplexMultiplyPacked(_Input3[secondCoordinate], twiddle);
+}
+
+[numthreads(8, 8, 1)]
+void FFTStageHorizontal(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_Resolution || id.y >= (uint)_Resolution)
+        return;
+    uint halfStage = (uint)_StageSize / 2;
+    uint groupStart = (id.x / (uint)_StageSize) * (uint)_StageSize;
+    uint position = id.x % (uint)_StageSize;
+    uint localIndex = position % halfStage;
+    uint2 first = uint2(groupStart + localIndex, id.y);
+    uint2 second = uint2(groupStart + localIndex + halfStage, id.y);
+    float4 a, b, c, d;
+    Butterfly(first, second, localIndex, position >= halfStage, a, b, c, d);
+    WriteOutputs(id.xy, a, b, c, d);
+}
+
+[numthreads(8, 8, 1)]
+void FFTStageVertical(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_Resolution || id.y >= (uint)_Resolution)
+        return;
+    uint halfStage = (uint)_StageSize / 2;
+    uint groupStart = (id.y / (uint)_StageSize) * (uint)_StageSize;
+    uint position = id.y % (uint)_StageSize;
+    uint localIndex = position % halfStage;
+    uint2 first = uint2(id.x, groupStart + localIndex);
+    uint2 second = uint2(id.x, groupStart + localIndex + halfStage);
+    float4 a, b, c, d;
+    Butterfly(first, second, localIndex, position >= halfStage, a, b, c, d);
+    WriteOutputs(id.xy, a, b, c, d);
+}
+
+[numthreads(8, 8, 1)]
+void AssembleOcean(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_Resolution || id.y >= (uint)_Resolution)
+        return;
+
+    float4 field0 = _Input0[id.xy];
+    float4 field1 = _Input1[id.xy];
+    float4 field2 = _Input2[id.xy];
+    float4 field3 = _Input3[id.xy];
+
+    float displacementX = field0.x * _Choppiness;
+    float height = field0.z;
+    float displacementZ = field1.x * _Choppiness;
+    float slopeX = field1.z;
+    float slopeZ = field2.x;
+    float derivativeXX = field2.z;
+    float derivativeZZ = field3.x;
+    float derivativeXZ = field3.z;
+
+    float jacobian = (1.0 + _Choppiness * derivativeXX) * (1.0 + _Choppiness * derivativeZZ)
+        - _Choppiness * _Choppiness * derivativeXZ * derivativeXZ;
+    // Preserve compressed areas through the minimum Jacobian with gradual recovery
+    float previousTurbulence = _Displacement[id.xy].a;
+    float recovery = previousTurbulence + _DeltaTime * _TurbulenceRecovery / max(jacobian, 0.5);
+    float turbulence = min(jacobian, recovery);
+
+    _Displacement[id.xy] = float4(displacementX, height, displacementZ, turbulence);
+    // Combine cascade derivatives before rebuilding the surface normal
+    _SurfaceData[id.xy] = float4(
+        slopeX,
+        slopeZ,
+        _Choppiness * derivativeXX,
+        _Choppiness * derivativeZZ);
+}
+
+int WrapProbeCoordinate(int coordinate)
+{
+    // Resolution is constrained to a power of two by FFTOceanController
+    return coordinate & (_Resolution - 1);
+}
+
+float BilinearProbeHeight(Texture2D<float4> displacementTexture, float domainSize)
+{
+    float2 pixel = frac(_HeightProbeWorldXZ / max(domainSize, 0.001)) * _Resolution - 0.5;
+    int2 basePixel = int2(floor(pixel));
+    float2 blend = frac(pixel);
+    int2 p00 = int2(WrapProbeCoordinate(basePixel.x), WrapProbeCoordinate(basePixel.y));
+    int2 p10 = int2(WrapProbeCoordinate(basePixel.x + 1), p00.y);
+    int2 p01 = int2(p00.x, WrapProbeCoordinate(basePixel.y + 1));
+    int2 p11 = int2(p10.x, p01.y);
+    float bottom = lerp(
+        displacementTexture.Load(int3(p00, 0)).y,
+        displacementTexture.Load(int3(p10, 0)).y,
+        blend.x);
+    float top = lerp(
+        displacementTexture.Load(int3(p01, 0)).y,
+        displacementTexture.Load(int3(p11, 0)).y,
+        blend.x);
+    return lerp(bottom, top, blend.y);
+}
+
+[numthreads(1, 1, 1)]
+void SampleSurfaceHeight(uint3 id : SV_DispatchThreadID)
+{
+    _HeightProbeResult[0] = BilinearProbeHeight(_ProbeDisplacement0, _HeightProbeDomains.x)
+        + BilinearProbeHeight(_ProbeDisplacement1, _HeightProbeDomains.y)
+        + BilinearProbeHeight(_ProbeDisplacement2, _HeightProbeDomains.z);
+}
+
